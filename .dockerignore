@@ -1,0 +1,10 @@
+.git
+.venv
+.env
+.env.*
+.idea
+.jbeval
+.playwright-mcp
+__pycache__
+**/__pycache__
+*.py[cod]

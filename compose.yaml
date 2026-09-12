@@ -1,15 +1,55 @@
 services:
+  backend:
+    image: fastapi-keycloak-backend:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    init: true
+    environment:
+      KEYCLOAK_SERVER_URL: ${KEYCLOAK_SERVER_URL:-http://localhost:8180}
+      KEYCLOAK_INTERNAL_SERVER_URL: http://keycloak:8080
+      KEYCLOAK_REALM: ${KEYCLOAK_REALM:-fastapi-app}
+      KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID:-fastapi-docs}
+      KEYCLOAK_AUDIENCE: ${KEYCLOAK_AUDIENCE:-fastapi-api}
+      KEYCLOAK_VALIDATION_MODE: ${KEYCLOAK_VALIDATION_MODE:-jwt}
+      KEYCLOAK_INTROSPECTION_CLIENT_ID: ${KEYCLOAK_INTROSPECTION_CLIENT_ID:-fastapi-introspection}
+      KEYCLOAK_INTROSPECTION_CLIENT_SECRET: ${KEYCLOAK_INTROSPECTION_CLIENT_SECRET:-}
+      KEYCLOAK_HTTP_TIMEOUT_SECONDS: ${KEYCLOAK_HTTP_TIMEOUT_SECONDS:-10}
+      KEYCLOAK_JWKS_CACHE_SECONDS: ${KEYCLOAK_JWKS_CACHE_SECONDS:-300}
+      KEYCLOAK_CLOCK_SKEW_SECONDS: ${KEYCLOAK_CLOCK_SKEW_SECONDS:-0}
+    ports:
+      - "127.0.0.1:8001:8000"
+    depends_on:
+      keycloak:
+        condition: service_healthy
+
   keycloak:
     image: quay.io/keycloak/keycloak:26.7.3
     command: ["start-dev", "--import-realm"]
     environment:
       KC_BOOTSTRAP_ADMIN_USERNAME: admin
       KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_HOSTNAME: ${KEYCLOAK_SERVER_URL:-http://localhost:8180}
+      KC_HEALTH_ENABLED: "true"
     ports:
       - "127.0.0.1:8180:8080"
     volumes:
       - keycloak_data:/opt/keycloak/data
       - ./keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
+    healthcheck:
+      test:
+        - CMD
+        - bash
+        - -ec
+        - >-
+          exec 3<>/dev/tcp/127.0.0.1/9000;
+          printf 'GET /health/ready HTTP/1.0\r\n\r\n' >&3;
+          read -r response <&3;
+          [[ "$$response" == *' 200 '* ]]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
 
 volumes:
   keycloak_data:

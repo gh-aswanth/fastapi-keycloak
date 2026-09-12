@@ -17,16 +17,52 @@ Authorize one method at a time in Swagger; both methods send the same
 `Authorization` header. Every access token receives the same signature, issuer,
 audience, expiry, and role checks, regardless of how it was obtained.
 
-## Run locally
+## Run with Docker Compose
+
+Requirements: Docker with Compose and BuildKit. Host Python and uv are not needed.
+
+```sh
+docker compose up --build -d
+docker compose logs -f backend
+```
+
+Swagger is at <http://localhost:8001/docs>, and Keycloak is at
+<http://localhost:8180>. The backend waits for Keycloak's readiness check. Port
+8001 must be free; stop a host development server using it before starting Compose.
+
+The backend image, `fastapi-keycloak-backend:local`, uses the official
+`ghcr.io/astral-sh/uv:python3.13-bookworm-slim` base. It installs dependencies from
+`uv.lock` with `uv sync --locked --no-dev --no-install-project`, caches the uv
+downloads during builds, and runs Uvicorn as a non-root user. Source is copied
+into the image; rebuild after changes. Local virtual environments, Git metadata,
+and `.env` files are excluded from the build context.
+
+Compose reads optional settings from `.env` and passes them as runtime environment
+variables. It supplies `KEYCLOAK_INTERNAL_SERVER_URL=http://keycloak:8080` for the
+backend's async JWKS and introspection calls. `KEYCLOAK_SERVER_URL` remains the
+browser-facing URL and expected JWT issuer. Keycloak's `KC_HOSTNAME` uses the same
+public URL, so tokens have a consistent issuer regardless of the request origin.
+
+To build only the backend image:
+
+```sh
+docker compose build backend
+```
+
+## Run the backend on your host
 
 Requirements: Python 3.12+, [uv](https://docs.astral.sh/uv/), and Docker Compose.
 
 ```sh
 uv sync --locked
 cp .env.example .env
-docker compose up -d
+docker compose stop backend
+docker compose up -d keycloak
 uv run uvicorn main:app --reload --port 8001
 ```
+
+Leave `KEYCLOAK_INTERNAL_SERVER_URL` unset for host execution; network calls then
+use `KEYCLOAK_SERVER_URL` as before.
 
 Wait for Keycloak to start (check `docker compose logs -f keycloak`), then:
 
@@ -162,8 +198,25 @@ Additional settings:
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `KEYCLOAK_HTTP_TIMEOUT_SECONDS` | `10` | Timeout for key retrieval and introspection |
-| `KEYCLOAK_JWKS_CACHE_SECONDS` | `300` | Public-key cache lifetime; an unknown key ID triggers a refresh |
+| `KEYCLOAK_JWKS_CACHE_SECONDS` | `300` | Public-key cache lifetime; unknown key IDs can trigger a refresh after the 30-second refresh cooldown |
 | `KEYCLOAK_CLOCK_SKEW_SECONDS` | `0` | Allowed clock difference for JWT time claims, up to 300 seconds |
+
+## Async request I/O
+
+All routes and authentication dependencies are async. Key retrieval and token
+introspection use awaited calls on one shared `httpx.AsyncClient` per application
+worker. FastAPI's lifespan manages the client's connection pool and closes it
+asynchronously on shutdown. No synchronous HTTP client or `PyJWKClient` is used.
+
+The signing-key cache uses an `asyncio.Lock` to share a refresh across concurrent
+requests. Requests with usable cached keys continue without waiting for unrelated
+refreshes. Cache expiry requires a successful refresh; failures return `503`
+instead of accepting stale keys. Unknown key IDs return `401` after a successful
+lookup and follow the same 30-second refresh cooldown as the previous client.
+
+JWT signature/claim validation and role checks are local computations without
+I/O. Environment settings, including `.env`, are loaded once during module
+initialization, before request handling.
 
 ## Update an existing development realm
 
@@ -200,6 +253,7 @@ Set these values in `.env` or the process environment:
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `KEYCLOAK_SERVER_URL` | `http://localhost:8180` | Base URL, including a path prefix if used |
+| `KEYCLOAK_INTERNAL_SERVER_URL` | Unset; uses the public URL | Optional internal base URL for server-to-server HTTP calls |
 | `KEYCLOAK_REALM` | `fastapi-app` | Realm issuing access tokens |
 | `KEYCLOAK_CLIENT_ID` | `fastapi-docs` | Public Swagger OAuth client |
 | `KEYCLOAK_AUDIENCE` | `fastapi-api` | Required access-token audience |
@@ -212,8 +266,9 @@ origin (`http://localhost:8001`). Add an audience mapper that includes
 Keep the built-in `basic`, `profile`, and `roles` default client scopes assigned
 so access tokens include the subject, profile, and realm roles.
 Use RS256 to sign tokens. The configured issuer must match the token's `iss`
-exactly and be reachable by both the browser and FastAPI; consistently use
-`localhost` for the bundled Keycloak server.
+exactly and be reachable by the browser. FastAPI uses the internal URL when one
+is configured, while continuing to validate the public issuer. Use `localhost`
+for the bundled Keycloak browser URL and `keycloak:8080` inside the Compose network.
 
 For deployment, use HTTPS, deployment-specific callback URLs and origins, secure
 credentials, and a production Keycloak deployment with an external database.

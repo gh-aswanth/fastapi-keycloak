@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
     keycloak_server_url: HttpUrl = HttpUrl("http://localhost:8180")
+    keycloak_internal_server_url: HttpUrl | None = None
     keycloak_realm: str = Field(default="fastapi-app", min_length=1)
     keycloak_client_id: str = Field(default="fastapi-docs", min_length=1)
     keycloak_audience: str = Field(default="fastapi-api", min_length=1)
@@ -34,6 +35,11 @@ class Settings(BaseSettings):
     @property
     def issuer(self) -> str:
         return f"{str(self.keycloak_server_url).rstrip('/')}/realms/{self.keycloak_realm}"
+
+    @property
+    def internal_realm_url(self) -> str:
+        server_url = self.keycloak_internal_server_url or self.keycloak_server_url
+        return f"{str(server_url).rstrip('/')}/realms/{self.keycloak_realm}"
 
 
 settings = Settings()
