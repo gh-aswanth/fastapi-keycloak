@@ -1,0 +1,148 @@
+{
+  "realm": "fastapi-app",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "resetPasswordAllowed": false,
+  "roles": {
+    "realm": [
+      {
+        "name": "user",
+        "description": "Application user"
+      },
+      {
+        "name": "admin",
+        "description": "Application administrator"
+      }
+    ],
+    "client": {
+      "fastapi-api": [
+        {"name": "reports:read", "description": "Read reports"},
+        {"name": "service:read", "description": "Read service status"}
+      ]
+    }
+  },
+  "clients": [
+    {
+      "clientId": "fastapi-api",
+      "name": "FastAPI resource server",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "bearerOnly": true
+    },
+    {
+      "clientId": "fastapi-docs",
+      "name": "FastAPI Swagger UI",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "http://localhost:8000/docs/oauth2-redirect",
+        "http://127.0.0.1:8000/docs/oauth2-redirect"
+      ],
+      "webOrigins": [
+        "http://localhost:8000",
+        "http://127.0.0.1:8000"
+      ],
+      "defaultClientScopes": ["basic", "web-origins", "profile", "roles"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      },
+      "protocolMappers": [
+        {
+          "name": "fastapi-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "fastapi-api",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "fastapi-service",
+      "name": "Local service account example",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "local-service-secret-change-me",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "defaultClientScopes": ["basic", "roles"],
+      "protocolMappers": [
+        {
+          "name": "fastapi-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "fastapi-api",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "fastapi-introspection",
+      "name": "FastAPI token introspection",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "local-introspection-secret-change-me",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false
+    }
+  ],
+  "users": [
+    {
+      "username": "demo",
+      "enabled": true,
+      "firstName": "Demo",
+      "lastName": "User",
+      "email": "demo@example.com",
+      "emailVerified": true,
+      "realmRoles": ["user"],
+      "clientRoles": {"fastapi-api": ["reports:read"]},
+      "requiredActions": [],
+      "credentials": [
+        {
+          "type": "password",
+          "value": "demo-password",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "demo-admin",
+      "enabled": true,
+      "firstName": "Demo",
+      "lastName": "Administrator",
+      "email": "demo-admin@example.com",
+      "emailVerified": true,
+      "realmRoles": ["user", "admin"],
+      "clientRoles": {"fastapi-api": ["reports:read"]},
+      "requiredActions": [],
+      "credentials": [
+        {"type": "password", "value": "demo-admin-password", "temporary": false}
+      ]
+    },
+    {
+      "username": "service-account-fastapi-service",
+      "enabled": true,
+      "serviceAccountClientId": "fastapi-service",
+      "clientRoles": {"fastapi-api": ["service:read"]}
+    }
+  ]
+}
