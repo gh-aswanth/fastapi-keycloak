@@ -1,11 +1,27 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Annotated
 
+import httpx
 from fastapi import Depends, FastAPI
 
 from auth import CurrentUser, RequireRoles
 from config import settings
+from keycloak_client import AsyncKeycloakClient
+
+
+@asynccontextmanager
+async def lifespan(application: FastAPI) -> AsyncIterator[None]:
+    async with httpx.AsyncClient(
+        timeout=settings.keycloak_http_timeout_seconds,
+        follow_redirects=False,
+    ) as http_client:
+        application.state.keycloak_client = AsyncKeycloakClient(http_client, settings)
+        yield
+
 
 app = FastAPI(
+    lifespan=lifespan,
     title="Keycloak FastAPI",
     description=(
         "Use **Authorize → Keycloak** for browser login, or **BearerToken** to paste "

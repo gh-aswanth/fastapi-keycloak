@@ -1,17 +1,14 @@
 from typing import Annotated, Any
 
-import httpx
 import jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import (
     HTTPAuthorizationCredentials,
     HTTPBearer,
     OAuth2AuthorizationCodeBearer,
 )
-from jwt import PyJWKClient
-from jwt.exceptions import PyJWKClientConnectionError, PyJWKClientError
-
 from config import settings
+from keycloak_client import AsyncKeycloakClient, AuthenticationServiceUnavailable
 
 
 oauth2_scheme = OAuth2AuthorizationCodeBearer(
@@ -28,44 +25,14 @@ bearer_scheme = HTTPBearer(
     auto_error=False,
 )
 
-jwks_client = PyJWKClient(
-    f"{settings.issuer}/protocol/openid-connect/certs",
-    cache_jwk_set=True,
-    lifespan=settings.keycloak_jwks_cache_seconds,
-    timeout=settings.keycloak_http_timeout_seconds,
-)
+async def get_keycloak_client(request: Request) -> AsyncKeycloakClient:
+    return request.app.state.keycloak_client
 
 
-def ensure_token_active(token: str) -> None:
-    secret = settings.keycloak_introspection_client_secret
-    if secret is None or not secret.get_secret_value():
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Authentication service unavailable",
-        )
-    try:
-        response = httpx.post(
-            f"{settings.issuer}/protocol/openid-connect/token/introspect",
-            data={"token": token, "token_type_hint": "access_token"},
-            auth=(settings.keycloak_introspection_client_id, secret.get_secret_value()),
-            timeout=settings.keycloak_http_timeout_seconds,
-        )
-        response.raise_for_status()
-        result = response.json()
-        if not isinstance(result, dict) or not isinstance(result.get("active"), bool):
-            raise ValueError("Invalid introspection response")
-    except (httpx.HTTPError, ValueError) as error:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Authentication service unavailable",
-        ) from error
-    if not result["active"]:
-        raise jwt.InvalidTokenError("Access token is no longer active")
-
-
-def get_current_user(
+async def get_current_user(
     oauth_token: Annotated[str | None, Depends(oauth2_scheme)],
     bearer: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)],
+    keycloak: Annotated[AsyncKeycloakClient, Depends(get_keycloak_client)],
 ) -> dict[str, Any]:
     token = oauth_token or (bearer.credentials if bearer else None)
     if not token:
@@ -75,7 +42,7 @@ def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
     try:
-        signing_key = jwks_client.get_signing_key_from_jwt(token)
+        signing_key = await keycloak.get_signing_key_from_jwt(token)
         claims = jwt.decode(
             token,
             signing_key.key,
@@ -88,14 +55,14 @@ def get_current_user(
         if claims.get("typ") != "Bearer":
             raise jwt.InvalidTokenError("Expected a Keycloak access token")
         if settings.keycloak_validation_mode == "introspection":
-            ensure_token_active(token)
+            await keycloak.ensure_token_active(token)
         return claims
-    except PyJWKClientConnectionError as error:
+    except AuthenticationServiceUnavailable as error:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Authentication service unavailable",
         ) from error
-    except (jwt.InvalidTokenError, PyJWKClientError) as error:
+    except jwt.InvalidTokenError as error:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired access token",
@@ -113,7 +80,7 @@ class RequireRoles:
         self.roles = set(roles)
         self.client_id = client_id
 
-    def __call__(self, current_user: CurrentUser) -> dict[str, Any]:
+    async def __call__(self, current_user: CurrentUser) -> dict[str, Any]:
         if self.client_id is None:
             role_access = current_user.get("realm_access", {})
         else:
